@@ -24,7 +24,7 @@ class AgriApp extends StatelessWidget {
       initialRoute: '/',
       routes: {
         '/': (context) => const HomeScreen(),
-        '/disease': (context) => const CropDiseaseScreen(),
+        '/crop-disease': (context) => const CropDiseaseScreen(),
         '/chatbot': (context) => const ChatbotScreen(),
         '/marketplace': (context) => const MarketplaceScreen(),
         '/orders': (context) => const OrdersScreen(),
