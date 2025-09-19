@@ -21,14 +21,59 @@ class AgriApp extends StatelessWidget {
         primarySwatch: Colors.green,
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      initialRoute: '/',
-      routes: {
-        '/': (context) => const HomeScreen(),
-        '/crop-disease': (context) => const CropDiseaseScreen(),
-        '/chatbot': (context) => const ChatbotScreen(),
-        '/marketplace': (context) => const MarketplaceScreen(),
-        '/orders': (context) => const OrdersScreen(),
-      },
+      home: const MainPage(),
+    );
+  }
+}
+
+class MainPage extends StatefulWidget {
+  const MainPage({super.key});
+
+  @override
+  State<MainPage> createState() => _MainPageState();
+}
+
+class _MainPageState extends State<MainPage> {
+  int _currentIndex = 0;
+
+  final List<Widget> _screens = const [
+    HomeScreen(),
+    CropDiseaseScreen(),
+    ChatbotScreen(),
+    MarketplaceScreen(),
+    OrdersScreen(),
+  ];
+
+  void changeTab(int index) {
+    setState(() {
+      _currentIndex = index;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: IndexedStack(index: _currentIndex, children: _screens),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        type: BottomNavigationBarType.fixed,
+        selectedItemColor: Colors.green,
+        unselectedItemColor: Colors.grey,
+        onTap: (index) => changeTab(index),
+        items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: "Home"),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.local_florist),
+            label: "Crop",
+          ),
+          BottomNavigationBarItem(icon: Icon(Icons.chat), label: "Chatbot"),
+          BottomNavigationBarItem(icon: Icon(Icons.store), label: "Market"),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.shopping_bag),
+            label: "Orders",
+          ),
+        ],
+      ),
     );
   }
 }

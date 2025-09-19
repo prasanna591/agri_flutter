@@ -19,12 +19,16 @@ class Product {
   final String name;
   final double price;
   final String description;
+  final String category; // Add this new field
+  final String imageUrl; // Add this for images
 
   Product({
     required this.id,
     required this.name,
     required this.price,
     required this.description,
+    required this.category,
+    required this.imageUrl,
   });
 
   factory Product.fromJson(Map<String, dynamic> json) {
@@ -33,6 +37,8 @@ class Product {
       name: json['name'],
       price: (json['price'] as num).toDouble(),
       description: json['description'] ?? '',
+      category: json['category'] ?? 'All',
+      imageUrl: json['imageUrl'] ?? 'https://via.placeholder.com/150',
     );
   }
 }
@@ -112,6 +118,15 @@ class HealthStatus {
     );
   }
 
+  Map<String, dynamic> toJson() {
+    return {
+      'status': status,
+      'rag_system': ragSystem,
+      'knowledge_base_size': knowledgeBaseSize,
+      'timestamp': timestamp,
+    };
+  }
+
   bool get isHealthy => status == 'healthy';
   bool get isRagEnabled => ragSystem == 'initialized';
 }
@@ -177,16 +192,19 @@ class ApiService {
     }
   }
 
-  /// 🤖 AI Chatbot - Compatible with ChatbotScreen
-  static Future<String> askChatbot(String question) async {
+  /// 🤖 AI Chatbot - Compatible with ChatbotScreen (Original method preserved)
+  static Future<String> askChatbot({
+    required String question,
+    required String sessionId,
+  }) async {
     try {
-      debugPrint('Sending question: $question');
+      debugPrint('Sending question: $question (Session: $sessionId)');
 
       final response = await http
           .post(
-            Uri.parse('$baseUrl/chatbot/query'),
+            Uri.parse('$baseUrl/chatbot/chat'),
             headers: headers,
-            body: json.encode({'question': question}),
+            body: json.encode({'message': question, 'session_id': sessionId}),
           )
           .timeout(timeoutDuration);
 
@@ -217,7 +235,176 @@ class ApiService {
     }
   }
 
-  /// Detailed chatbot query - returns structured response
+  /// 🤖 Enhanced AI Chatbot with Session Management
+  static Future<String> askChatbotWithSession(
+    String question,
+    String sessionId, {
+    String? context,
+    String? cropType,
+  }) async {
+    try {
+      debugPrint(
+        'Sending question with session: $question (Session: $sessionId)',
+      );
+
+      Map<String, dynamic> requestBody = {
+        'question': question,
+        'session_id': sessionId,
+      };
+
+      // Add optional parameters if provided
+      if (context != null && context.isNotEmpty) {
+        requestBody['context'] = context;
+      }
+      if (cropType != null && cropType.isNotEmpty) {
+        requestBody['crop_type'] = cropType;
+      }
+
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/chatbot/query'),
+            headers: headers,
+            body: json.encode(requestBody),
+          )
+          .timeout(timeoutDuration);
+
+      debugPrint('Session response status: ${response.statusCode}');
+      debugPrint('Session response body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data['answer'] ??
+            data['reply'] ??
+            'Sorry, I couldn\'t process your question.';
+      } else if (response.statusCode == 422) {
+        return 'Please check your question and try again.';
+      } else if (response.statusCode == 500) {
+        return 'Server error. Please try again later.';
+      } else {
+        // Try to parse error details from response
+        try {
+          final errorData = json.decode(response.body);
+          throw Exception(
+            errorData['detail'] ??
+                'HTTP ${response.statusCode}: ${response.reasonPhrase}',
+          );
+        } catch (_) {
+          throw Exception(
+            'HTTP ${response.statusCode}: ${response.reasonPhrase}',
+          );
+        }
+      }
+    } on SocketException {
+      throw Exception('No internet connection. Please check your network.');
+    } on HttpException {
+      throw Exception('Network error. Please try again.');
+    } on FormatException {
+      throw Exception('Invalid response format from server.');
+    } catch (e) {
+      debugPrint('Error in askChatbotWithSession: $e');
+      if (e is Exception) {
+        rethrow;
+      }
+      throw Exception('Failed to get response: ${e.toString()}');
+    }
+  }
+
+  /// 🔄 Clear chat session
+  static Future<bool> clearChatSession(String sessionId) async {
+    try {
+      debugPrint('Clearing session: $sessionId');
+
+      // Corrected in clearChatSession
+      final response = await http
+          .post(
+            // Corrected to POST method
+            Uri.parse('$baseUrl/chatbot/conversation/clear'), // Corrected path
+            headers: headers,
+            body: json.encode({'session_id': sessionId}), // Added correct body
+          )
+          .timeout(timeoutDuration);
+
+      debugPrint('Clear session status: ${response.statusCode}');
+
+      return response.statusCode == 200 || response.statusCode == 204;
+    } catch (e) {
+      debugPrint('Error clearing session: $e');
+      // Don't throw error for session clearing as it's not critical
+      return false;
+    }
+  }
+
+  /// 📝 Get chat history for a session
+  static Future<List<Map<String, dynamic>>> getChatHistory(
+    String sessionId,
+  ) async {
+    try {
+      debugPrint('Getting chat history for session: $sessionId');
+
+      // Original in getChatHistory
+      // Corrected in getChatHistory
+      final response = await http
+          .get(
+            Uri.parse(
+              '$baseUrl/chatbot/conversation/history?session_id=$sessionId',
+            ), // Corrected path and added query parameter
+            headers: headers,
+          )
+          .timeout(timeoutDuration);
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return List<Map<String, dynamic>>.from(data['history'] ?? []);
+      } else {
+        debugPrint('Failed to get chat history: ${response.statusCode}');
+        return [];
+      }
+    } catch (e) {
+      debugPrint('Error getting chat history: $e');
+      return [];
+    }
+  }
+
+  /// 🎯 Smart chatbot query with fallback chain
+  static Future<String> askChatbotSmart(
+    String question, {
+    String? sessionId,
+    String? context,
+    String? cropType,
+    bool useSessionIfAvailable = true,
+  }) async {
+    try {
+      // Try session-based query first if session ID is available
+      if (sessionId != null && useSessionIfAvailable) {
+        return await askChatbotWithSession(
+          question,
+          sessionId,
+          context: context,
+          cropType: cropType,
+        );
+      }
+
+      // Fallback to regular chatbot query
+      return await askChatbot(
+        question: question,
+        sessionId: sessionId ?? "default-session", // or generate UUID here
+      );
+    } catch (e) {
+      debugPrint('Smart query failed, trying simple query: $e');
+
+      try {
+        // Try simple query as fallback
+        return await askChatbotSimple(question);
+      } catch (e2) {
+        debugPrint('All queries failed, using offline fallback: $e2');
+
+        // Return offline fallback response
+        return _getFallbackResponse(question);
+      }
+    }
+  }
+
+  /// Detailed chatbot query - returns structured response (Original method preserved)
   static Future<ChatResponse> askChatbotDetailed(
     String question, {
     String? context,
@@ -268,7 +455,64 @@ class ApiService {
     }
   }
 
-  /// Simple fallback query using basic keyword matching
+  /// Enhanced detailed query with session support
+  static Future<ChatResponse> askChatbotDetailedWithSession(
+    String question,
+    String sessionId, {
+    String? context,
+    String? cropType,
+  }) async {
+    try {
+      debugPrint(
+        'Sending detailed question with session: $question (Session: $sessionId)',
+      );
+
+      Map<String, dynamic> requestBody = {
+        'question': question,
+        'session_id': sessionId,
+      };
+      if (context != null && context.isNotEmpty) {
+        requestBody['context'] = context;
+      }
+      if (cropType != null && cropType.isNotEmpty) {
+        requestBody['crop_type'] = cropType;
+      }
+
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/detailed_query'),
+            headers: headers,
+            body: json.encode(requestBody),
+          )
+          .timeout(timeoutDuration);
+
+      debugPrint('Detailed session response status: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return ChatResponse.fromJson(data);
+      } else if (response.statusCode == 422) {
+        throw Exception('Invalid request format. Please check your input.');
+      } else if (response.statusCode == 500) {
+        throw Exception('Server error. Please try again later.');
+      } else {
+        throw Exception(
+          'HTTP ${response.statusCode}: ${response.reasonPhrase}',
+        );
+      }
+    } on SocketException {
+      throw Exception('No internet connection. Please check your network.');
+    } on HttpException {
+      throw Exception('Network error. Please try again.');
+    } on FormatException {
+      throw Exception('Invalid response format from server.');
+    } catch (e) {
+      debugPrint('Error in askChatbotDetailedWithSession: $e');
+      rethrow;
+    }
+  }
+
+  /// Simple fallback query using basic keyword matching (Original method preserved)
   static Future<String> askChatbotSimple(String question) async {
     try {
       debugPrint('Sending simple question: $question');
@@ -296,7 +540,7 @@ class ApiService {
     }
   }
 
-  /// Check server health
+  /// Check server health (Original method preserved)
   static Future<HealthStatus> checkHealth() async {
     try {
       final response = await http
@@ -315,7 +559,29 @@ class ApiService {
     }
   }
 
-  /// Get available topics from the knowledge base
+  /// Enhanced server health check with additional info
+  static Future<Map<String, dynamic>> checkServerStatus() async {
+    try {
+      final response = await http
+          .get(Uri.parse('$baseUrl/status'), headers: headers)
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        return json.decode(response.body);
+      } else {
+        throw Exception('Status check failed: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('Server status check error: $e');
+      return {
+        'status': 'offline',
+        'error': e.toString(),
+        'timestamp': DateTime.now().toIso8601String(),
+      };
+    }
+  }
+
+  /// Get available topics from the knowledge base (Original method preserved)
   static Future<List<String>> getAvailableTopics() async {
     try {
       final response = await http
@@ -340,7 +606,23 @@ class ApiService {
     }
   }
 
-  /// Offline fallback responses
+  /// Generate a unique session ID
+  static String generateSessionId() {
+    final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+    final random =
+        (DateTime.now().microsecond * 1000 + DateTime.now().millisecond)
+            .toString();
+    return '${timestamp}_$random';
+  }
+
+  /// Validate session ID format
+  static bool isValidSessionId(String? sessionId) {
+    if (sessionId == null || sessionId.isEmpty) return false;
+    // Basic validation - should contain timestamp and random part
+    return sessionId.contains('_') && sessionId.length > 10;
+  }
+
+  /// Enhanced offline fallback responses (Original method preserved with improvements)
   static String _getFallbackResponse(String question) {
     final lowerQuestion = question.toLowerCase();
 
@@ -356,12 +638,18 @@ class ApiService {
     } else if (lowerQuestion.contains('weather') ||
         lowerQuestion.contains('climate')) {
       return "🌤️ Check local forecasts and avoid irrigation before rains. Use row covers for frost protection.";
+    } else if (lowerQuestion.contains('disease') ||
+        lowerQuestion.contains('fungus')) {
+      return "🍄 Practice crop rotation and ensure good air circulation. Remove infected plant material promptly. Consider copper-based fungicides for organic treatment.";
+    } else if (lowerQuestion.contains('seed') ||
+        lowerQuestion.contains('planting')) {
+      return "🌱 Choose disease-resistant varieties when possible. Plant at proper depth and spacing. Check seed germination rates before planting.";
     } else {
       return "🚜 I'm currently offline, but here's a general farming tip: Monitor crops weekly for early signs of disease or pest problems. Feel free to ask more specific questions when I'm back online!";
     }
   }
 
-  /// Test connection to server
+  /// Test connection to server (Original method preserved)
   static Future<bool> testConnection() async {
     try {
       await checkHealth();
@@ -371,36 +659,116 @@ class ApiService {
     }
   }
 
-  /// 🛒 Get All Products
-  static Future<List<Product>> fetchProducts() async {
-    final response = await http.get(Uri.parse("$baseUrl/products/all"));
+  /// Enhanced connection test with detailed results
+  static Future<Map<String, dynamic>> testConnectionDetailed() async {
+    final startTime = DateTime.now();
 
-    if (response.statusCode == 200) {
-      List<dynamic> data = jsonDecode(response.body);
-      return data.map((item) => Product.fromJson(item)).toList();
-    } else {
-      throw Exception("Failed to load products");
+    try {
+      final healthStatus = await checkHealth();
+      final endTime = DateTime.now();
+      final responseTime = endTime.difference(startTime).inMilliseconds;
+
+      return {
+        'connected': true,
+        'response_time_ms': responseTime,
+        'server_status': healthStatus.toJson(),
+        'timestamp': endTime.toIso8601String(),
+      };
+    } catch (e) {
+      final endTime = DateTime.now();
+      final responseTime = endTime.difference(startTime).inMilliseconds;
+
+      return {
+        'connected': false,
+        'response_time_ms': responseTime,
+        'error': e.toString(),
+        'timestamp': endTime.toIso8601String(),
+      };
     }
   }
 
-  /// ➕ Add New Product
-  static Future<Product> addProduct(Product product) async {
-    final response = await http.post(
-      Uri.parse("$baseUrl/products/add"),
-      headers: {"Content-Type": "application/json"},
-      body: jsonEncode({
-        "id": product.id,
-        "name": product.name,
-        "price": product.price,
-        "description": product.description,
-      }),
-    );
-
-    if (response.statusCode == 200) {
-      return Product.fromJson(jsonDecode(response.body));
-    } else {
-      throw Exception("Failed to add product");
-    }
+  // 🛒 Get All Products (SIMULATED with categories for demonstration)
+  static Future<List<Product>> fetchProducts() async {
+    // This part is modified to simulate a backend response with categories.
+    // In a real app, your FastAPI backend would provide this data.
+    return Future.value([
+      Product(
+        id: 1,
+        name: "Organic Fertilizer",
+        price: 299.0,
+        description: "Rich in nitrogen and potassium.",
+        category: "Fertilizers",
+        imageUrl:
+            "https://via.placeholder.com/150/8BC34A/FFFFFF?text=Fertilizer",
+      ),
+      Product(
+        id: 2,
+        name: "Hybrid Seeds Pack",
+        price: 149.0,
+        description: "High-yield, drought-resistant.",
+        category: "Seeds",
+        imageUrl: "https://via.placeholder.com/150/4CAF50/FFFFFF?text=Seeds",
+      ),
+      Product(
+        id: 3,
+        name: "Drip Irrigation Kit",
+        price: 899.0,
+        description: "Water-efficient irrigation system.",
+        category: "Equipment",
+        imageUrl:
+            "https://via.placeholder.com/150/2196F3/FFFFFF?text=Equipment",
+      ),
+      Product(
+        id: 4,
+        name: "Premium Potting Soil",
+        price: 120.0,
+        description: "Aerated and rich with nutrients.",
+        category: "Soil Test",
+        imageUrl: "https://via.placeholder.com/150/795548/FFFFFF?text=Soil",
+      ),
+      Product(
+        id: 5,
+        name: "Tomato Seeds",
+        price: 85.0,
+        description: "Heirloom variety, great for sauces.",
+        category: "Seeds",
+        imageUrl: "https://via.placeholder.com/150/E91E63/FFFFFF?text=Tomato",
+      ),
+      Product(
+        id: 6,
+        name: "Pesticide Spray",
+        price: 450.0,
+        description: "Organic pest control solution.",
+        category:
+            "Fertilizers", // Renaming from 'Pesticide' to fit a broad category
+        imageUrl:
+            "https://via.placeholder.com/150/FF9800/FFFFFF?text=Pesticide",
+      ),
+      Product(
+        id: 7,
+        name: "Tractor",
+        price: 250000.0,
+        description: "Used tractor, low hours.",
+        category: "Equipment",
+        imageUrl: "https://via.placeholder.com/150/607D8B/FFFFFF?text=Tractor",
+      ),
+      Product(
+        id: 8,
+        name: "Soil pH Test Kit",
+        price: 550.0,
+        description: "Easy to use kit for pH testing.",
+        category: "Soil Test",
+        imageUrl: "https://via.placeholder.com/150/4CAF50/FFFFFF?text=pH+Kit",
+      ),
+    ]);
+    // The original code is commented out below
+    // final response = await http.get(Uri.parse("$baseUrl/products/all"));
+    // if (response.statusCode == 200) {
+    //   List<dynamic> data = jsonDecode(response.body);
+    //   return data.map((item) => Product.fromJson(item)).toList();
+    // } else {
+    //   throw Exception("Failed to load products");
+    // }
   }
 
   /// 📦 Create New Order
